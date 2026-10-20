@@ -1,0 +1,19 @@
+# Copy to config.toml and change what differs; config.toml is layered over this file, so any key
+# left out keeps the value here.
+
+[collimation]
+port = 8099
+lens_mm = 15.5                # the camera's lens; also set on the page (it scales the primary's mm)
+focal_mm = 750                # the telescope's primary - not with a Barlow
+aperture_mm = 150
+
+[camera]                      # ZWO ASI120MM Mini, which slides into a 1.25" holder
+name_match = "ASI120"         # part of the name the ZWO SDK lists
+sdk_lib = ""                  # libASICamera2.so; empty: look in the usual places and /opt/FireCapture*
+pixel_um = 3.75
+width = 1280
+height = 960
+bin = 1
+exposure_ms = 20              # the start; the page's Auto exposure sets it, and it is remembered
+gain = 0                      # the Mini's gain runs 0-100; daylight wants 0
+usb_bandwidth = 80

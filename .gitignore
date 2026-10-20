@@ -1,0 +1,8 @@
+# Per-tube state and frames: picks, axis, camera settings, saved pictures
+config.toml
+data/
+captures/
+
+.venv/
+__pycache__/
+*.pyc
