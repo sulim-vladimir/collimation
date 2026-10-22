@@ -189,17 +189,6 @@ function target(st) {
   return svg(S, S, b);
 }
 
-// The tube from the side, the mirror to adjust picked out in orange.
-function tube(mirror) {
-  const on = '#ffa94d', off = '#7b848d';
-  const p = mirror === 'primary' ? on : off, s = mirror === 'secondary' ? on : off;
-  return svg(78, 30,
-    `<rect x="2" y="8" width="66" height="18" rx="2" fill="none" stroke="#9aa3ab"/>` +
-    `<rect x="54" y="2" width="9" height="6" fill="#9aa3ab"/>` +
-    `<path d="M5,10 Q9,17 5,24" fill="none" stroke="${p}" stroke-width="${mirror === 'primary' ? 3.5 : 2}"/>` +
-    `<line x1="54" y1="21" x2="63" y2="12" stroke="${s}" stroke-width="${mirror === 'secondary' ? 3.5 : 2}"/>`);
-}
-
 // What the four circles look like in the picture.
 function sketch(s) {
   const c = 75;
@@ -295,6 +284,8 @@ function show(s) {
   const steps = document.getElementById('steps');
   steps.innerHTML = '';
   for (const st of s.steps) {
+    // step 1 needs S, which shows only with white paper behind the secondary: hidden until picked
+    if (st.key === 'focuser' && !s.circles.S) { delete TRAILS[st.key]; continue; }
     if (st.have) {
       const tr = TRAILS[st.key] = TRAILS[st.key] || [];
       const last = tr[tr.length - 1];
@@ -310,7 +301,7 @@ function show(s) {
         ? `<div class="big">${st.value.toFixed(st.unit === '%' ? 1 : 2)}${unit} <span class="verdict">${WORD[st.grade]}${st.locked ? '' : ' ?'}</span></div>` +
           `<div class="muted">green below ${+st.good.toFixed(2)}${unit}</div>`
         : `<div class="muted" style="margin:6px 0">${st.text}</div>`) +
-      `<div class="mirror">${tube(st.mirror)}<span>${st.mirror}:<br>${st.screws}</span></div>` +
+      `<div class="mirror">${st.mirror}: ${st.screws}</div>` +
       (st.have ? `<div class="muted" style="margin-top:3px">${st.text}</div>` : '') + `</div>`;
     steps.appendChild(d);
   }

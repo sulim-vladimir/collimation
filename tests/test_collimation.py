@@ -159,3 +159,90 @@ def test_readings_need_the_measured_axis_and_fall_back_to_p_on_the_axis(tmp_path
     assert sec["have"] and sec["ref_name"] == "axis"      # no S: P on the axis instead
     want = cam.truth()["P"] - cam.truth()["axis"]
     assert (sec["dx"], sec["dy"]) == pytest.approx(tuple(want), abs=0.7)
+
+
+def ring_frame(cam, rings, bg=60):
+    """A frame with bright disks (x, y, r, level) on a dark ground, blurred like the real rim."""
+    import cv2
+    img = np.full((cam.height, cam.width), bg, np.float32)
+    for x, y, r, level in rings:
+        cv2.circle(img, (int(round(x * 16)), int(round(y * 16))), int(round(r * 16)), level, -1,
+                   cv2.LINE_AA, 4)
+    img = cv2.GaussianBlur(img, (0, 0), 2.0) + np.random.default_rng(1).normal(0, 1.5, img.shape)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def test_find_ring_holds_the_size():
+    """A bigger disk of the same edge sign close by does not win: only the size picked can."""
+    from collimation.analysis import find_ring, gradients
+    cam = sim()
+    frame = ring_frame(cam, [(460, 400, 34, 220), (531, 412, 28, 220)])
+    (x, y), s = find_ring(gradients(frame), 500, 405, 28, -1, 40)
+    # a coarse find - the edge is then followed along rays to a fraction of a px
+    assert (x, y) == pytest.approx((531, 412), abs=2.5)
+    assert s > 0
+
+
+def test_a_followed_circle_is_not_pulled_onto_a_neighbour(tmp_path):
+    """Seen for real: the donut (r 28) settled on a ring of 32, the camera's reflection (r 78) on
+    the lens rim inside it (r 61). When its own edge goes, a circle stays put, marked lost."""
+    cam = sim()
+    cam._frame, cam._seq = ring_frame(cam, [(640, 480, 28, 220)]), 1
+    coll = Collimator(cam, CCFG, path=tmp_path / "coll.json", sim=True)
+    coll.action("pick", {"what": "D"})
+    for x, y in rough_clicks((640, 480), 28, err=2.0):
+        coll.action("click", {"fx": x / cam.width, "fy": y / cam.height})
+    coll.action("done", {})
+    assert coll.circles["D"]["locked"]
+    cam._frame, cam._seq = ring_frame(cam, [(646, 476, 33, 220)]), 2     # only a bigger one
+    coll.update()
+    d = coll.circles["D"]
+    assert not d["locked"]
+    assert (d["x"], d["y"], d["r"]) == pytest.approx((640, 480, 28), abs=0.6)
+    cam._frame, cam._seq = ring_frame(cam, [(590, 485, 33, 220), (661, 468, 28, 220)]), 3
+    coll.update()                                    # its own edge back, moved: found again
+    d = coll.circles["D"]
+    assert d["locked"]
+    assert (d["x"], d["y"], d["r"]) == pytest.approx((661, 468, 28), abs=0.6)
+
+
+def test_a_big_jump_is_found_again(tmp_path):
+    """A brisk screw turn moves the donut further than its edge can be followed along rays."""
+    cam = sim()
+    cam._frame, cam._seq = cam.frame(), 1
+    coll = Collimator(cam, CCFG, path=tmp_path / "coll.json", sim=True)
+    for n in "PDC":
+        pick(coll, cam, n)
+    cam.tilt1 = cam.tilt1 + np.array([24.0, -14.0])  # D jumps ~28 px in one frame
+    cam._frame, cam._seq = cam.frame(), 2
+    coll.update()
+    t = cam.truth()
+    for n in "PDC":
+        c = coll.circles[n]
+        assert c["locked"], n
+        assert (c["x"], c["y"]) == pytest.approx(tuple(t[n]), abs=0.9 if n == "P" else 0.6), n
+        assert c["r"] == pytest.approx(radii(cam)[n], abs=1.5), n
+
+
+def test_turn_test_with_the_edges_followed_meanwhile(tmp_path):
+    """Seen for real: the circles followed the turning picture, then the second frame turned
+    them once more - D ended up where it had been before the turn, on another ring."""
+    cam = sim()
+    cam.secondary = np.array([30.0, -20.0])      # C and D ~20 px off the axis, as on the real tube
+    cam._frame, cam._seq = cam.frame(), 1
+    coll = Collimator(cam, CCFG, path=tmp_path / "coll.json", sim=True)
+    for n in "SPDC":
+        pick(coll, cam, n)
+    coll.action("turn_first", {})
+    for seq, turned in enumerate(np.arange(5.0, 180.1, 5.0), 2):   # a slow turn, many frames
+        cam.turned = float(turned)
+        cam._frame, cam._seq = cam.frame(), seq
+        coll.update()
+    coll.action("turn_second", {})
+    cam._frame, cam._seq = cam.frame(), 100
+    coll.update()
+    t = cam.truth()
+    for n in "SPDC":
+        c = coll.circles[n]
+        assert c["locked"], n
+        assert (c["x"], c["y"]) == pytest.approx(tuple(t[n]), abs=0.9 if n in "SP" else 0.6), n

@@ -7,6 +7,7 @@ secondary's edge at 15 cm and the donut at 80 cm.
 """
 
 import math
+import warnings
 
 import cv2
 import numpy as np
@@ -139,6 +140,67 @@ def follow(img, circle, band=None, polarity=0, min_inliers=12, near=None):
     if not polarity:
         polarity = int(np.sign(np.median(signs[keep]))) or 1
     return new, polarity, float(keep.sum()) / 240.0
+
+
+def gradients(frame):
+    """The slope of the frame's log brightness in x and y, for ring_strength and find_ring.
+
+    Log brightness, so that an edge's strength is its contrast - the same at any exposure or
+    gain, and in any picture: the stretched image the edges are followed in changes its scale
+    with what else is in view. Smoothed so that a ring sampled 1 px off its edge still sees most
+    of the step (find_ring samples on a 2 px grid)."""
+    img = np.asarray(frame, np.float32)
+    if img.ndim == 3:
+        img = img.mean(axis=2)
+    if np.issubdtype(np.asarray(frame).dtype, np.integer) and np.asarray(frame).dtype != np.uint8:
+        img = img * (255.0 / float(np.iinfo(np.asarray(frame).dtype).max))
+    g = cv2.GaussianBlur(np.log(img + 2.0), (0, 0), 1.5)
+    return (cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3) / 8.0,
+            cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3) / 8.0)
+
+
+def ring_strength(grads, centres, r, polarity, n=96):
+    """How strongly a circle of radius r round each centre sits on an edge of the given sign:
+    the median, round the circle, of the slope across it. The median shrugs off clips and vanes;
+    parts outside the frame do not count, and a circle mostly outside it scores -inf."""
+    gx, gy = grads
+    h, w = gx.shape
+    c = np.atleast_2d(np.asarray(centres, np.float32))
+    th = np.linspace(0, 2 * np.pi, n, endpoint=False, dtype=np.float32)
+    cos, sin = np.cos(th)[None, :], np.sin(th)[None, :]
+    X = (c[:, :1] + r * cos).astype(np.float32)
+    Y = (c[:, 1:2] + r * sin).astype(np.float32)
+    inside = (X >= 0) & (X <= w - 1) & (Y >= 0) & (Y <= h - 1)
+    v = (cv2.remap(gx, X, Y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE) * cos
+         + cv2.remap(gy, X, Y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE) * sin)
+    v = np.where(inside, v * (polarity or 1), np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)      # an all-outside row: no median
+        s = np.nanmedian(v, axis=1)
+    s = np.where(inside.mean(axis=1) >= 0.3, np.nan_to_num(s, nan=-np.inf), -np.inf)
+    return s
+
+
+def find_ring(grads, cx, cy, r, polarity, window, step=2.0):
+    """Look for a circle of known radius and edge sign anywhere within +-window px of (cx, cy).
+
+    Following an edge along rays from the old centre fails once the circle has moved more than
+    the band - a brisk screw turn, or the camera turned in the holder - and the wider retry then
+    took any edge in reach, of any size: the camera's reflection (r 78) settled on the lens rim
+    inside it (r 61), the donut (r 28) on a ring of 32. Here the size is held, so only an edge
+    the size of the one picked can win. Coarse - to a px or two, the edge being blurred - and
+    meant to be followed from. Returns ((x, y), strength)."""
+    offs = np.arange(-window, window + 1e-6, step)
+    gx, gy = np.meshgrid(offs, offs)
+    cand = np.column_stack([cx + gx.ravel(), cy + gy.ravel()])
+    s = ring_strength(grads, cand, r, polarity)
+    best = cand[int(np.argmax(s))]
+    fine = np.arange(-step, step + 1e-6, step / 4)
+    fx, fy = np.meshgrid(fine, fine)
+    cand = np.column_stack([best[0] + fx.ravel(), best[1] + fy.ravel()])
+    s = ring_strength(grads, cand, r, polarity)
+    i = int(np.argmax(s))
+    return (float(cand[i, 0]), float(cand[i, 1])), float(s[i])
 
 
 def snap(img, clicks):

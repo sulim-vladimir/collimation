@@ -23,7 +23,8 @@ import time
 import cv2
 import numpy as np
 
-from .analysis import coma_tolerance_mm, direction, follow, prepare, rotation_axis, snap
+from .analysis import (coma_tolerance_mm, direction, find_ring, follow, gradients, prepare,
+                       ring_strength, rotation_axis, snap)
 
 FEATURES = {"S": "secondary outline", "P": "primary edge", "D": "centre donut",
             "C": "camera reflection"}
@@ -35,8 +36,11 @@ PICK_HINTS = {
     "C": " The dark spot of the lens, in the white card's reflection.",
 }
 COLOURS = {"S": (255, 170, 60), "P": (80, 200, 255), "D": (90, 90, 255), "C": (230, 110, 230)}
-GRADE_COLOURS = {"good": (80, 200, 80), "close": (40, 200, 230), "adjust": (70, 70, 235)}
-ARROW_GAIN = 5.0            # offsets are drawn this many times longer than they are
+# A followed circle keeps the radius it was picked at, to this much (refocusing changed the real
+# ones by ~2%; the neighbours they jumped to were 14-25% off), and an edge less than this share
+# of its own strength is not taken for it.
+RADIUS_TOL, RADIUS_TOL_PX = 0.04, 2.0
+STRENGTH_KEEP = 0.4
 
 
 class Collimator:
@@ -62,9 +66,11 @@ class Collimator:
         self.tracking = True
         self.picking, self.clicks = None, []
         self.turn = None                  # first frame of the 180 deg turn test
+        self.turn_circles = {}            # where the circles were at that first frame
         self.msg = "Pick the circles: S, P, D and C." if not self.circles else ""
         self._seq = None
         self._img = None
+        self._grads = None
         self._lock = threading.RLock()
         self.saved_camera = saved.get("camera") or {}    # exposure/gain last used here
         self.peak = None           # brightest part of the frame, 0..1 of full scale
@@ -78,7 +84,7 @@ class Collimator:
         data = {"lens_mm": self.lens_mm,
                 "camera": {"exposure_ms": self.cam.exposure_ms, "gain": self.cam.gain},
                 "axis": list(self.axis) if self.axis else None,
-                "circles": {k: {f: v[f] for f in ("x", "y", "r", "pol")}
+                "circles": {k: {f: v[f] for f in ("x", "y", "r", "pol", "r0") if f in v}
                             for k, v in self.circles.items()},
                 "at": time.time()}
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,29 +109,64 @@ class Collimator:
             sub = np.asarray(frame)[::4, ::4]
             self.peak = float(np.percentile(sub, 99.5)) / full
             self.clipped = float(np.mean(sub >= 0.98 * full))
-            if self.tracking:
+            self._grads = gradients(frame)
+            # not while the camera is being turned for the axis: the circles would follow the
+            # turning picture, and the second frame then turned them once more
+            if self.tracking and self.turn is None:
                 for c in self.circles.values():
-                    circle = (c["x"], c["y"], c["r"])
-                    got = follow(self._img, circle, polarity=c["pol"])
-                    if got is None:
-                        # a brisk screw turn moves a small circle further than its band in one
-                        # frame: look wider, with the edge's sign to keep off its neighbours
-                        got = follow(self._img, circle, band=min(max(0.5 * c["r"], 8.0), 40.0),
-                                     polarity=c["pol"])
-                    if got is None:
-                        c["locked"] = False
-                        continue
-                    # a big jump is caught only part of the way - the rays on the far side miss
-                    # the edge - so go again from there until it stops moving
-                    for _ in range(4):
-                        moved = math.hypot(got[0][0] - circle[0], got[0][1] - circle[1])
-                        circle = got[0]
-                        if moved < 0.2:
-                            break
-                        got = follow(self._img, circle, polarity=c["pol"]) or got
-                    (c["x"], c["y"], c["r"]), c["pol"], c["q"] = got
-                    c["locked"] = True
+                    self._track(c)
         return frame
+
+    def _accept(self, c, got):
+        """A fit the circle may move to: the size it was picked at, and an edge about as strong
+        as the one it has been following. (circle, pol, q, strength) or None."""
+        if got is None:
+            return None
+        (x, y, r), pol, q = got
+        r0 = c["r0"]
+        if abs(r - r0) > max(RADIUS_TOL_PX, RADIUS_TOL * r0):
+            return None
+        s = float(ring_strength(self._grads, [(x, y)], r, pol)[0])
+        s0 = c.get("s0")
+        if not s > 0 or (s0 and s < STRENGTH_KEEP * s0):
+            return None
+        return (x, y, r), pol, q, s
+
+    def _track(self, c):
+        """Follow one circle into the new frame, or leave it where it was, marked lost.
+
+        Never onto another edge: a circle keeps the size it was picked at, and an edge much
+        weaker than its own is not taken. When the edge has moved out of reach of the rays (a
+        brisk screw turn, a bumped tube, the camera turned), it is looked for by size nearby."""
+        c.setdefault("r0", c["r"])
+        circle, pol = (c["x"], c["y"], c["r"]), c["pol"]
+        got = self._accept(c, follow(self._img, circle, polarity=pol))
+        if got is None and pol:
+            r0 = c["r0"]
+            window = float(np.clip(0.5 * r0, 30.0, 80.0))
+            (x, y), s = find_ring(self._grads, c["x"], c["y"], r0, pol, window)
+            s0 = c.get("s0")
+            if s > 0 and (not s0 or s >= STRENGTH_KEEP * s0):
+                got = self._accept(c, follow(self._img, (x, y, r0), polarity=pol))
+        if got is None:
+            c["locked"] = False
+            if c.get("s0"):
+                # lost for a while - the light changed, a card in the way - a weaker edge of the
+                # same size may be taken after all: down to the 0.4 share in about 30 frames
+                c["s0"] *= 0.97
+            return
+        # a big jump is caught only part of the way - the rays on the far side miss the edge -
+        # so go again from there until it stops moving
+        for _ in range(4):
+            moved = math.hypot(got[0][0] - circle[0], got[0][1] - circle[1])
+            circle = got[0]
+            if moved < 0.2:
+                break
+            got = self._accept(c, follow(self._img, circle, polarity=got[1])) or got
+        (c["x"], c["y"], c["r"]), c["pol"], c["q"], s = got
+        # the edge's strength drifts with the light and the exposure; a jump is what is refused
+        c["s0"] = s if not c.get("s0") else 0.9 * c["s0"] + 0.1 * s
+        c["locked"] = True
 
     def axis_or_centre(self):
         if self.axis:
@@ -267,8 +308,11 @@ class Collimator:
             self.msg = "Those points do not make a circle - spread them round the edge."
             return
         (x0, y0, r), pol, q, locked = got
-        self.circles[self.picking] = {"x": x0, "y": y0, "r": r, "pol": pol, "q": q,
-                                      "locked": locked}
+        c = {"x": x0, "y": y0, "r": r, "pol": pol, "q": q, "locked": locked, "r0": r}
+        if locked:
+            # the size and edge strength it is held to while it is followed
+            c["s0"] = max(float(ring_strength(self._grads, [(x0, y0)], r, pol)[0]), 0.0) or None
+        self.circles[self.picking] = c
         self.msg = (f"{FEATURES[self.picking]}: r = {r:.0f} px, "
                     + ("locked onto the edge" if locked else
                        "no clear edge there - kept where you clicked, not followed")
@@ -280,8 +324,9 @@ class Collimator:
             self.msg = "No frame yet."
             return
         self.turn = frame.copy()
+        self.turn_circles = {k: (c["x"], c["y"]) for k, c in self.circles.items()}
         self.msg = ("Now turn the camera 180 deg in the holder (use a mark on its body), "
-                    "tighten the screw, and press Second frame.")
+                    "tighten the screw, and press Second frame. The circles hold still till then.")
 
     def _turn_second(self):
         frame, _, _ = self.cam.latest()
@@ -291,13 +336,20 @@ class Collimator:
         (ax, ay), resp = rotation_axis(self.turn, frame)
         self.turn = None
         if resp < 0.05:
+            # the circles held still through the turn, so they are where they were - in a
+            # picture that has turned: unless the camera is turned back, look for them nearby
+            self.turn_circles = {}
             self.msg = (f"The two frames do not match (response {resp:.2f}): was the turn 180 deg "
                         "and the light steady? Try again.")
             return
         self.axis = (ax, ay)
-        # the picked circles turned with the camera: put them where they are now
-        for c in self.circles.values():
-            c["x"], c["y"] = 2 * ax - c["x"], 2 * ay - c["y"]
+        # the picked circles turned with the camera: put them where they are now - from where
+        # they were at the first frame, whatever happened to them in between. The turn is never
+        # quite 180 deg (176-177 on the real tube); following them from there takes up the rest.
+        for k, c in self.circles.items():
+            x, y = self.turn_circles.get(k, (c["x"], c["y"]))
+            c["x"], c["y"] = 2 * ax - x, 2 * ay - y
+        self.turn_circles = {}
         cx, cy = (self.cam.width - 1) / 2, (self.cam.height - 1) / 2
         self.msg = (f"Focuser axis at ({ax:.1f}, {ay:.1f}): {math.hypot(ax - cx, ay - cy):.1f} px "
                     f"from the frame centre (match {resp:.2f}).")
@@ -308,7 +360,7 @@ class Collimator:
         """The three readings: one centre against another (or against the focuser axis).
 
         Each carries its offset in its own unit (vx, vy, value) with its good/close limits, so
-        the page can draw it as a target, and both centres in pixels for the arrows."""
+        the page can draw it as a target, and both centres in pixels."""
         axis, measured = self.axis_or_centre()
         axis = axis if measured else None   # the frame centre is no stand-in for a reading:
         #                                     the M12 holder alone can put it 140 px off
@@ -405,9 +457,10 @@ class Collimator:
 
         (ax, ay), measured = self.axis_or_centre()
         axis_col = (0, 220, 0) if measured else (160, 160, 160)
-        cv2.drawMarker(img, p(ax, ay), axis_col, cv2.MARKER_CROSS, 48, 2 if measured else 1)
-        cv2.putText(img, "axis" if measured else "frame centre", (p(ax, ay)[0] + 8, p(ax, ay)[1] + 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, axis_col, 1, cv2.LINE_AA)
+        cv2.drawMarker(img, p(ax, ay), axis_col, cv2.MARKER_CROSS, 48, 1)
+        if measured:
+            cv2.putText(img, "axis", (p(ax, ay)[0] + 8, p(ax, ay)[1] + 22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, axis_col, 1, cv2.LINE_AA)
         for name, c in self.circles.items():
             col = COLOURS[name]
             thick = 3 if name == self.picking else 2
@@ -417,15 +470,8 @@ class Collimator:
             lx, ly = p(c["x"] + 0.71 * c["r"], c["y"] - 0.71 * c["r"])
             cv2.putText(img, name if c.get("locked", False) else name + "?", (lx + 4, ly - 4),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, col, 2, cv2.LINE_AA)
-        for n, st in enumerate(self.steps(), 1):
-            if not st["have"]:
-                continue
-            ref, tgt = st["ref_xy"], st["tgt_xy"]
-            end = (ref[0] + ARROW_GAIN * (tgt[0] - ref[0]), ref[1] + ARROW_GAIN * (tgt[1] - ref[1]))
-            col = GRADE_COLOURS[st["grade"]]
-            if math.hypot(end[0] - ref[0], end[1] - ref[1]) >= 3:
-                cv2.arrowedLine(img, p(*ref), p(*end), col, 2, cv2.LINE_AA, tipLength=0.25)
-            cv2.putText(img, str(n), (p(*end)[0] + 6, p(*end)[1] + 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, col, 2, cv2.LINE_AA)
+        # No arrows for the readings here: near collimation D, C, P and the axis all sit within a
+        # few px of each other, and two arrows, their numbers and the axis cross on top made a
+        # knot nobody could read. The targets beside the picture show each offset, magnified.
         for x, y in self.clicks:
             cv2.circle(img, p(x, y), 4, (0, 255, 255), -1)

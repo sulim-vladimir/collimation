@@ -52,7 +52,7 @@ white paper behind the secondary.
 
 Each reading is drawn as a target: the dot is the offset, magnified, as in the picture; bring it
 into the green. A grey tail shows where it has just been, so a small turn of a screw shows which
-way that screw moves it. A tube sketch beside it shows which mirror's screws to turn.
+way that screw moves it. Beside it: which mirror's screws to turn.
 
 ## Setting up
 
@@ -83,10 +83,14 @@ way that screw moves it. A tube sketch beside it shows which mirror's screws to 
    rather than bending it - press Done before the next circle.
 2. **Focuser axis**: **1st frame**, turn the camera 180 deg in the holder (a mark on its body helps),
    tighten, **2nd frame**. Whatever stays put when the camera turns is on the axis; the circles are
-   moved to where the turn put them. Redo it whenever the camera is reseated.
-3. **Adjust in order** 1, 2, 3, then check 2 and 3 again. The arrows in the picture are drawn 5x
-   longer than the offset and coloured by grade.
+   moved to where the turn put them; between the two frames they hold still. Redo it whenever the
+   camera is reseated: each seating moves the axis a few px (~1% of the primary's radius in step 2).
+3. **Adjust in order** 1, 2, 3, then check 2 and 3 again: the secondary's tilt moves the camera's
+   reflection too. Step 1 is shown only once S is picked.
 
+A followed circle keeps the size it was picked at and the strength of its edge: when that edge is
+lost it stays put, marked `?`, rather than settling on a neighbouring ring, and looks for an edge
+of its size nearby (a brisk screw turn moves the donut further than the rays reach).
 **Following edges / Frozen** stops the circles moving - handy while a hand is in front of the tube.
 
 ## The ASI120MM Mini
