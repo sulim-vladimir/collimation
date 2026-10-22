@@ -6,7 +6,7 @@ concentric:
   S  the secondary mirror's outline        S on the focuser axis  secondary under the focuser
   P  the primary's edge, in the secondary  P on S                 secondary tilt (its 3 screws)
   D  the primary's centre donut            D on C                 primary tilt (its screws)
-  C  the camera's reflection in the primary (the dark spot of its lens, in a white card)
+  C  the camera's reflection in the primary (foil or a white card round its lens)
 
 The focuser axis is not the sensor centre - the camera never sits dead centre in the holder, and
 an M12 lens holder alone can put it 140 px off - so it is measured: turn the camera 180 deg in the
@@ -32,8 +32,8 @@ PICK_HINTS = {
     "S": " The secondary's own outline, round everything else - NOT the dark disk in the middle,"
          " which is its reflection. It shows only with white paper behind the secondary.",
     "P": " The rim of the bright disk, between the clips.",
-    "D": " The donut's outer edge, in the middle of the dark disk.",
-    "C": " The dark spot of the lens, in the white card's reflection.",
+    "D": " The centre mark's outer edge, in the middle of the dark disk.",
+    "C": " The outer edge of the bright ring round the lens (foil or a white card), reflected.",
 }
 COLOURS = {"S": (255, 170, 60), "P": (80, 200, 255), "D": (90, 90, 255), "C": (230, 110, 230)}
 # A followed circle keeps the radius it was picked at, to this much (refocusing changed the real

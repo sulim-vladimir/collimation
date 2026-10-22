@@ -5,6 +5,11 @@ so with an M12 lens on it slides straight into the eyepiece holder and looks dow
 the secondary. A page in the browser draws the circles it finds and shows, as targets, how far
 each pair is off - and moves as you turn the screws.
 
+![The page on the real tube, collimated: P the primary's edge, D its centre mark, C the camera's
+reflection in foil, and both readings in the green](docs/screenshot.png)
+
+*The real 150/750 at the end of the 2026-10-22 session: secondary tilt 1.4%, primary 0.17 mm.*
+
 ## Install
 
 ```
@@ -42,7 +47,9 @@ means the primary's axis passes through the camera. The camera sees D and C `2e/
 being how far the primary's axis passes from the focuser axis at the focal plane and `f` the
 telescope's focal length. The page turns the offset into `e` in mm, using the lens focal length
 set on the page, and grades it against the coma tolerance `0.0072 F³` mm - coma at the field
-centre as large as the Airy disk, 0.9 mm at f/5. *Good* is under half of that.
+centre as large as the Airy disk, 0.9 mm at f/5. *Good* is under half of that. The lens never
+sits exactly on the focuser axis, so the reading changes a little as the camera turns (by ~0.1 mm
+on the real tube, once per turn); the mean of two readings 180 deg apart is the primary's own.
 
 Steps 1 and 2 are graded as a share of the radius (good: under 3% and 1.5%). Both need the
 focuser axis from the 180 deg turn - never the frame centre, which the M12 holder alone put
@@ -65,20 +72,26 @@ way that screw moves it. Beside it: which mirror's screws to turn.
 * **Light.** The tube aimed at a bright wall or the daytime sky - never the Sun - and nothing across
   its front (a railing's shadow lies across the primary). **Auto exposure** sets the gain to 0 and
   the exposure so the brightest parts sit at ~75%; leave the other controls alone while it works.
-* **White card on the lens.** The card with the hole must be **white on the side facing the
-  telescope**: its reflection fills the middle of the secondary's dark reflection, the donut (D)
-  shows against it and the hole (C) as a dark spot. With a dark card the middle stays black and
-  there is no C.
+* **Something bright round the lens**, facing the telescope: its reflection fills the middle of
+  the secondary's dark reflection, and is C. With nothing there the middle stays black and there
+  is no C. The camera's end of the tube gets little light: white paper round the lens stayed dark
+  on the real tube, **aluminium foil** showed as a bright crinkled ring, its outer edge a clean C.
+* **Exposure for C.** Auto exposure suits the primary, and can leave the camera's reflection
+  nearly black. Then raise the **gain** rather than the exposure (gain 40 at 150 ms instead of
+  1000 ms at gain 0: the same picture at 7 frames a second, not 1). The bright primary clips, and
+  that does no harm: a clipped disk grows evenly all round and its centre stays put.
 * **White paper behind the secondary**, opposite the focuser: only then does the secondary's
   outline (S) show; against the black tube it cannot be seen.
-* **Seat the camera** square and snug in the holder.
+* **Seat the camera** square and snug in the holder, pressed against the same side each time: on
+  the real tube each reseating moved the axis ~2 px, which is ~0.5% of the primary's radius in
+  step 2.
 
 ## Doing it
 
 1. **Pick each circle**: its button, then 3-6 clicks spread round its edge, then **Done**. The circle
    snaps onto the nearest edge and follows it from then on (*locked*); one that found no clear edge
    is drawn where you clicked and marked `?`. For P click the rim between the clips; for D the
-   donut's outer edge; for C the dark spot of the lens. The dark disk in the middle is the
+   centre mark's outer edge; for C the outer edge of the foil's reflection. The dark disk in the middle is the
    secondary's *reflection*, not S. Once a circle has locked, a click far from its edge is refused
    rather than bending it - press Done before the next circle.
 2. **Focuser axis**: **1st frame**, turn the camera 180 deg in the holder (a mark on its body helps),
@@ -105,7 +118,7 @@ frames, and a kill stops the camera first. If it does hang: unplug it for 5 s.
 
 | file | |
 |---|---|
-| `collimation/analysis.py` | circle fitting, following an edge along rays, the 180 deg turn (phase correlation), the coma tolerance |
+| `collimation/analysis.py` | circle fitting, following an edge along rays, finding a ring of known size, the 180 deg turn (phase correlation), the coma tolerance |
 | `collimation/tool.py` | the session: picks, axis, readings, Auto exposure, the picture with its overlays |
 | `collimation/camera.py` | threaded ZWO capture |
 | `collimation/sim.py` | the synthetic tube the tests and `--sim` use |
@@ -114,12 +127,20 @@ frames, and a kill stops the camera first. If it does hang: unplug it for 5 s.
 Edges are found along 240 rays from a circle's centre: the strongest step of the circle's sign
 (bright-to-dark or dark-to-bright), the slope measured over a few px so a soft, slightly defocused
 rim has one peak, then a circle fit that throws out what is not on it (the clips, 22 px inside
-the primary's rim, the vanes), loose first and tight last.
+the primary's rim, the vanes), loose first and tight last. A followed circle is held to the
+radius it was picked at (4%) and to the strength of its edge, measured on the log of the brightness
+so that it is a contrast, the same at any exposure; when the rays lose it, it is searched for by
+size within ~a radius. Nothing is followed between the two frames of the turn test.
 
 ## Status
 
 First real-tube session 2026-10-19 (150/750, ASI120MM Mini, 16 mm lens): P locks and holds still
-to 0.01 px; D was picked on a faint ring that is either the donut or a glint off the lens. Not yet
-done on the real tube: the turn test, S (needs the paper) and C (needs the white card).
+to 0.01 px.
+
+2026-10-22, the real tube collimated with it: steps 2 and 3, from 7.5% and 1.1 mm to ~1.5% and
+0.2 mm. P, D and C (in foil) each fitted to well under a pixel. Turned to four angles (0, 118,
+-177 and 24 deg), the camera gave the same axis to ~4 px and the same readings to ~0.5% and
+~0.1 mm; four 180 deg turn tests put the axis within ~2 px of each other. Not yet done on the real
+tube: S, so step 1 (needs the white paper behind the secondary).
 Where the primary's edge runs into the secondary's, the two fits lean ~0.7 px towards each other
 (seen in the simulator, where they nearly touch).
